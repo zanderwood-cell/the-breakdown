@@ -1,0 +1,49 @@
+name: Publish Weekly Newsletter
+
+on:
+  schedule:
+    - cron: '0 7 * * 2'
+
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (preview only, do not publish)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run newsletter agent
+        env:
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+          SUBSTACK_EMAIL:     ${{ secrets.SUBSTACK_EMAIL }}
+          SUBSTACK_PASSWORD:  ${{ secrets.SUBSTACK_PASSWORD }}
+          SUBSTACK_SUBDOMAIN: ${{ secrets.SUBSTACK_SUBDOMAIN }}
+          DRY_RUN:            ${{ github.event.inputs.dry_run || 'false' }}
+        run: python newsletter_agent.py
+
+      - name: Upload fallback on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: newsletter-fallback
+          path: fallback_*.html
+          if-no-files-found: ignore
