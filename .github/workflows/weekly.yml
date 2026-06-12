@@ -2,36 +2,57 @@ name: Publish Weekly Newsletter
 
 on:
   schedule:
-    - cron: '0 7 * * 2'  # Runs at 07:00, only on Tuesday
+    - cron: '0 7 * * 2'  # Tuesday 7am UTC
 
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: 'Dry run (preview only, do not publish)'
-        required: false
-        default: 'false'
-        type: choice
-        options: ['true', 'false']
 
 jobs:
-  publish:
+
+  # Runs automatically — generates the newsletter and posts a preview summary.
+  # You will get a GitHub email asking you to approve the publish job.
+  generate:
+    name: Generate Preview
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
+      - run: pip install -r requirements.txt
+      - name: Generate newsletter preview
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GENERATE_ONLY: 'true'
+        run: python newsletter_agent.py
+      - name: Upload preview for publish job
+        uses: actions/upload-artifact@v4
+        with:
+          name: newsletter-preview
+          path: newsletter_preview.json
+          retention-days: 7
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run newsletter agent
+  # Waits for your approval before running.
+  # GitHub emails you a link — click Approve and it publishes + posts to social.
+  publish:
+    name: Publish to Substack
+    needs: generate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - name: Download preview
+        uses: actions/download-artifact@v4
+        with:
+          name: newsletter-preview
+      - name: Publish newsletter
         env:
           ANTHROPIC_API_KEY:    ${{ secrets.ANTHROPIC_API_KEY }}
           SUBSTACK_EMAIL:       ${{ secrets.SUBSTACK_EMAIL }}
@@ -43,9 +64,7 @@ jobs:
           REDDIT_PASSWORD:      ${{ secrets.REDDIT_PASSWORD }}
           BLUESKY_HANDLE:       ${{ secrets.BLUESKY_HANDLE }}
           BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
-          DRY_RUN:              ${{ github.event.inputs.dry_run || 'false' }}
         run: python newsletter_agent.py
-
       - name: Upload fallback on failure
         if: failure()
         uses: actions/upload-artifact@v4
